@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import shutil
+from PIL import Image, ImageTk
 
 # Import PhotoSorter class from photoSorter.py
 from photoSorter import PhotoSorter
@@ -141,11 +142,31 @@ class PhotoSorterWorker(threading.Thread):
             if self.dry_run:
                 self._dry_run_scan(sorter)
             else:
-                # Process images
-                sorter.process_images()
+                # Capture print statements during processing
+                # This captures the summary from _print_summary() when verbose is True
+                import builtins
+                old_print = builtins.print
+                
+                def queue_print(*args, **kwargs):
+                    msg = ' '.join(str(arg) for arg in args)
+                    self.output_queue.put(('info', msg))
+                
+                try:
+                    # Temporarily replace print to capture output
+                    builtins.print = queue_print
+                    
+                    # Process images
+                    sorter.process_images()
+                finally:
+                    # Always restore print
+                    builtins.print = old_print
                 
                 # Send stats
                 self.output_queue.put(('stats', sorter.stats))
+                
+                # Always explicitly log summary to ensure it's visible
+                # This guarantees the summary appears even if verbose is False
+                self._log_summary(sorter.stats)
             
             self.output_queue.put(('complete', 'Processing complete'))
             
@@ -191,6 +212,18 @@ class PhotoSorterWorker(threading.Thread):
             
         except Exception as e:
             self.output_queue.put(('error', f"Dry-run error: {str(e)}"))
+    
+    def _log_summary(self, stats):
+        """Always log the processing summary regardless of verbose setting."""
+        self.output_queue.put(('info', ''))
+        self.output_queue.put(('info', '='*60))
+        self.output_queue.put(('info', 'Processing Summary:'))
+        self.output_queue.put(('info', f"  Wanted:        {stats['wanted']}"))
+        self.output_queue.put(('info', f"  Unwanted:      {stats['unwanted']}"))
+        self.output_queue.put(('info', f"  Non-image files: {stats['non_image_files']}"))
+        self.output_queue.put(('info', f"  Errors:        {stats['errors']}"))
+        self.output_queue.put(('info', '='*60))
+        self.output_queue.put(('info', ''))
 
 
 class ToolTip:
@@ -266,12 +299,18 @@ class PhotoSorterGUI:
         
         # Store button references for tooltips
         self.buttons = {}
+
+        # Track which image tab is currently active for keyboard navigation
+        self._active_image_folder_key = None
         
         # Setup UI
         self._setup_styles()
         self._create_widgets()
         self._setup_tooltips()
         self._start_queue_monitor()
+
+        # Keyboard navigation for image tabs
+        self._bind_image_navigation_keys()
     
     def _setup_styles(self):
         """Configure ttk theme and styles."""
@@ -296,9 +335,15 @@ class PhotoSorterGUI:
         # Create tabs
         self._create_config_tab()
         self._create_processing_tab()
+        self._create_import_tab()
+        self._create_wanted_tab()
+        self._create_unwanted_tab()
         
         # Status bar
         self._create_status_bar()
+
+        # Initialize active folder based on currently selected tab (if any)
+        self._set_active_image_folder_from_tab()
     
     def _create_config_tab(self):
         """Create Configuration tab."""
@@ -804,6 +849,376 @@ class PhotoSorterGUI:
     def _update_status(self, message):
         """Update status bar."""
         self.status_label.config(text=message)
+    
+    def _get_image_files(self, folder_path):
+        """Get list of image files from a folder."""
+        if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+            return []
+        
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp', '.gif'}
+        image_files = []
+        
+        for file in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, file)
+            if os.path.isfile(file_path):
+                ext = os.path.splitext(file)[1].lower()
+                if ext in image_extensions:
+                    image_files.append(file_path)
+        
+        return sorted(image_files)
+    
+    def _create_image_viewer_tab(self, parent_frame, folder_key, tab_name, transfer_options):
+        """Create an image viewer tab with navigation and transfer buttons."""
+        # Main container
+        main_frame = ttk.Frame(parent_frame)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Image display frame with navigation buttons on sides
+        image_frame = ttk.Frame(main_frame)
+        image_frame.pack(fill='both', expand=True, pady=10)
+        
+        # Left arrow button
+        left_btn = ttk.Button(image_frame, text='◀', width=3, command=lambda fk=folder_key: self._navigate_image(fk, -1))
+        left_btn.pack(side='left', padx=5, pady=5)
+        setattr(self, f'{folder_key}_left_btn', left_btn)
+        
+        # Image label (center)
+        image_label = ttk.Label(image_frame, text='No images found', anchor='center')
+        image_label.pack(side='left', fill='both', expand=True, padx=5)
+        setattr(self, f'{folder_key}_image_label', image_label)
+        
+        # Right arrow button
+        right_btn = ttk.Button(image_frame, text='▶', width=3, command=lambda fk=folder_key: self._navigate_image(fk, 1))
+        right_btn.pack(side='right', padx=5, pady=5)
+        setattr(self, f'{folder_key}_right_btn', right_btn)
+        
+        # Function bar
+        func_frame = ttk.LabelFrame(main_frame, text='Image Information', padding=10)
+        func_frame.pack(fill='x', pady=5)
+        
+        # Image count label
+        count_label = ttk.Label(func_frame, text='Images: 0')
+        count_label.grid(row=0, column=0, sticky='w', padx=5)
+        setattr(self, f'{folder_key}_count_label', count_label)
+        
+        # Image name label
+        name_label = ttk.Label(func_frame, text='Name: -')
+        name_label.grid(row=0, column=1, sticky='w', padx=20)
+        setattr(self, f'{folder_key}_name_label', name_label)
+        
+        # Transfer buttons frame
+        transfer_frame = ttk.Frame(func_frame)
+        transfer_frame.grid(row=0, column=2, sticky='e', padx=5)
+        
+        # Create transfer buttons based on options
+        for option in transfer_options:
+            if option == 'Clear all':
+                btn = ttk.Button(transfer_frame, text=option, command=self._clear_unwanted_folder)
+            else:
+                target_folder = option.replace('Transfer to ', '')
+                # Use default parameter to capture values correctly
+                btn = ttk.Button(transfer_frame, text=option, 
+                               command=lambda t=target_folder, fk=folder_key: self._transfer_image(fk, t))
+            btn.pack(side='left', padx=2)
+        
+        # Store folder key and current index
+        setattr(self, f'{folder_key}_images', [])
+        setattr(self, f'{folder_key}_current_index', 0)
+        setattr(self, f'{folder_key}_folder_key', folder_key)
+        
+        # Bind tab change event if not already bound
+        if not hasattr(self, '_tab_change_bound'):
+            self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
+            self._tab_change_bound = True
+    
+    def _create_import_tab(self):
+        """Create Import tab with image viewer."""
+        import_frame = ttk.Frame(self.notebook)
+        self.notebook.add(import_frame, text='Import')
+        self._create_image_viewer_tab(
+            import_frame, 
+            'import', 
+            'Import',
+            ['Transfer to Wanted', 'Transfer to Unwanted']
+        )
+        # Load images initially
+        self._load_images('import')
+    
+    def _create_wanted_tab(self):
+        """Create Wanted tab with image viewer."""
+        wanted_frame = ttk.Frame(self.notebook)
+        self.notebook.add(wanted_frame, text='Wanted')
+        self._create_image_viewer_tab(
+            wanted_frame,
+            'wanted',
+            'Wanted',
+            ['Transfer to Import', 'Transfer to Unwanted']
+        )
+        # Load images initially
+        self._load_images('wanted')
+    
+    def _create_unwanted_tab(self):
+        """Create Unwanted tab with image viewer."""
+        unwanted_frame = ttk.Frame(self.notebook)
+        self.notebook.add(unwanted_frame, text='Unwanted')
+        self._create_image_viewer_tab(
+            unwanted_frame,
+            'unwanted',
+            'Unwanted',
+            ['Transfer to Import', 'Transfer to Wanted', 'Clear all']
+        )
+        # Load images initially
+        self._load_images('unwanted')
+    
+    def _on_tab_changed(self, event=None):
+        """Handle tab change event to load images."""
+        selected_tab = self.notebook.index(self.notebook.select())
+        tab_text = self.notebook.tab(selected_tab, 'text')
+        
+        if tab_text == 'Import':
+            self._active_image_folder_key = 'import'
+            self._load_images('import')
+        elif tab_text == 'Wanted':
+            self._active_image_folder_key = 'wanted'
+            self._load_images('wanted')
+        elif tab_text == 'Unwanted':
+            self._active_image_folder_key = 'unwanted'
+            self._load_images('unwanted')
+        else:
+            self._active_image_folder_key = None
+    
+    def _load_images(self, folder_key):
+        """Load images for a specific folder."""
+        # Get folder path from config
+        if folder_key == 'import':
+            folder_path = self.config.get('import_path', './Import')
+        elif folder_key == 'wanted':
+            folder_path = self.config.get('wanted_path', './Wanted')
+        elif folder_key == 'unwanted':
+            folder_path = self.config.get('unwanted_path', './Unwanted')
+        else:
+            return
+        
+        # Get image files
+        image_files = self._get_image_files(folder_path)
+        setattr(self, f'{folder_key}_images', image_files)
+        setattr(self, f'{folder_key}_current_index', 0)
+        
+        # Update UI
+        count_label = getattr(self, f'{folder_key}_count_label')
+        count_label.config(text=f'Images: {len(image_files)}')
+        
+        if image_files:
+            self._display_image(folder_key, 0)
+        else:
+            self._display_no_image(folder_key)
+    
+    def _display_image(self, folder_key, index):
+        """Display image at given index."""
+        images = getattr(self, f'{folder_key}_images')
+        if not images or index < 0 or index >= len(images):
+            return
+        
+        image_path = images[index]
+        setattr(self, f'{folder_key}_current_index', index)
+        
+        # Update name label
+        name_label = getattr(self, f'{folder_key}_name_label')
+        name_label.config(text=f'Name: {os.path.basename(image_path)}')
+        
+        # Load and display image
+        try:
+            img = Image.open(image_path)
+
+            # Resize to 70% of original size (then cap to a max display size)
+            w, h = img.size
+            new_w = max(1, int(w * 0.5))
+            new_h = max(1, int(h * 0.5))
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            # Safety cap so huge photos still fit nicely
+            max_width, max_height = 700, 500
+            img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(img)
+            
+            # Update label
+            image_label = getattr(self, f'{folder_key}_image_label')
+            image_label.config(image=photo, text='')
+            image_label.image = photo  # Keep a reference
+            
+        except Exception as e:
+            image_label = getattr(self, f'{folder_key}_image_label')
+            image_label.config(image='', text=f'Error loading image: {str(e)}')
+
+    def _set_active_image_folder_from_tab(self):
+        """Set active image folder key based on current tab selection."""
+        try:
+            selected_tab = self.notebook.index(self.notebook.select())
+            tab_text = self.notebook.tab(selected_tab, 'text')
+        except Exception:
+            self._active_image_folder_key = None
+            return
+
+        if tab_text == 'Import':
+            self._active_image_folder_key = 'import'
+        elif tab_text == 'Wanted':
+            self._active_image_folder_key = 'wanted'
+        elif tab_text == 'Unwanted':
+            self._active_image_folder_key = 'unwanted'
+        else:
+            self._active_image_folder_key = None
+
+    def _bind_image_navigation_keys(self):
+        """Bind Left/Right arrow keys to navigate images in the active image tab."""
+        def should_ignore_keypress():
+            w = self.root.focus_get()
+            if w is None:
+                return False
+            cls = w.winfo_class()
+            # Avoid interfering with text entry widgets
+            return cls in {'Entry', 'Text', 'TEntry', 'TCombobox', 'TSpinbox'}
+
+        def on_left(event=None):
+            if should_ignore_keypress():
+                return
+            fk = self._active_image_folder_key
+            if fk in {'import', 'wanted', 'unwanted'}:
+                self._navigate_image(fk, -1)
+
+        def on_right(event=None):
+            if should_ignore_keypress():
+                return
+            fk = self._active_image_folder_key
+            if fk in {'import', 'wanted', 'unwanted'}:
+                self._navigate_image(fk, 1)
+
+        # Bind on root so it works regardless of where focus is (except entries/text)
+        self.root.bind('<Left>', on_left)
+        self.root.bind('<Right>', on_right)
+    
+    def _display_no_image(self, folder_key):
+        """Display message when no images found."""
+        image_label = getattr(self, f'{folder_key}_image_label')
+        image_label.config(image='', text='No images found')
+        
+        name_label = getattr(self, f'{folder_key}_name_label')
+        name_label.config(text='Name: -')
+    
+    def _navigate_image(self, folder_key, direction):
+        """Navigate to previous/next image."""
+        images = getattr(self, f'{folder_key}_images')
+        if not images:
+            return
+        
+        current_index = getattr(self, f'{folder_key}_current_index')
+        new_index = (current_index + direction) % len(images)
+        self._display_image(folder_key, new_index)
+    
+    def _transfer_image(self, folder_key, target_folder_key):
+        """Transfer current image to target folder."""
+        images = getattr(self, f'{folder_key}_images')
+        current_index = getattr(self, f'{folder_key}_current_index')
+        
+        if not images or current_index < 0 or current_index >= len(images):
+            messagebox.showwarning('Warning', 'No image selected')
+            return
+        
+        source_path = images[current_index]
+        source_folder = os.path.dirname(source_path)
+        
+        # Get target folder path
+        if target_folder_key.lower() == 'import':
+            target_folder = self.config.get('import_path', './Import')
+        elif target_folder_key.lower() == 'wanted':
+            target_folder = self.config.get('wanted_path', './Wanted')
+        elif target_folder_key.lower() == 'unwanted':
+            target_folder = self.config.get('unwanted_path', './Unwanted')
+        else:
+            messagebox.showerror('Error', 'Invalid target folder')
+            return
+        
+        # Create target folder if it doesn't exist
+        os.makedirs(target_folder, exist_ok=True)
+        
+        # Get destination path
+        filename = os.path.basename(source_path)
+        dest_path = os.path.join(target_folder, filename)
+        
+        # Handle filename conflicts
+        counter = 1
+        base_name, ext = os.path.splitext(filename)
+        while os.path.exists(dest_path):
+            new_filename = f"{base_name}_{counter}{ext}"
+            dest_path = os.path.join(target_folder, new_filename)
+            counter += 1
+        
+        try:
+            # Move file
+            shutil.move(source_path, dest_path)
+            
+            # Update image list
+            images.pop(current_index)
+            setattr(self, f'{folder_key}_images', images)
+            
+            # Update current index
+            if current_index >= len(images):
+                current_index = len(images) - 1
+            if current_index < 0:
+                current_index = 0
+            
+            setattr(self, f'{folder_key}_current_index', current_index)
+            
+            # Update UI
+            count_label = getattr(self, f'{folder_key}_count_label')
+            count_label.config(text=f'Images: {len(images)}')
+            
+            if images:
+                self._display_image(folder_key, current_index)
+            else:
+                self._display_no_image(folder_key)
+            
+            self._update_status(f'Image moved to {target_folder_key}')
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to move image: {str(e)}')
+    
+    def _clear_unwanted_folder(self):
+        """Clear all images from Unwanted folder with confirmation."""
+        # Double confirmation
+        if not messagebox.askyesno('Warning', 
+                                  'Are you sure you want to clear ALL images from the Unwanted folder?\n\n'
+                                  'This action cannot be undone!'):
+            return
+        
+        if not messagebox.askyesno('Final Confirmation', 
+                                  'This will permanently delete all files in the Unwanted folder.\n\n'
+                                  'Are you absolutely sure?'):
+            return
+        
+        unwanted_path = self.config.get('unwanted_path', './Unwanted')
+        
+        if not os.path.exists(unwanted_path):
+            messagebox.showinfo('Info', 'Unwanted folder does not exist or is empty')
+            return
+        
+        try:
+            deleted_count = 0
+            for file in os.listdir(unwanted_path):
+                file_path = os.path.join(unwanted_path, file)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                    deleted_count += 1
+            
+            # Reload images
+            self._load_images('unwanted')
+            
+            messagebox.showinfo('Success', f'Cleared {deleted_count} file(s) from Unwanted folder')
+            self._update_status(f'Cleared {deleted_count} file(s) from Unwanted folder')
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to clear folder: {str(e)}')
 
 
 def main():
