@@ -1,5 +1,5 @@
 {
-  "import_path": "C:/Users/User/Desktop/Programming/Python/PhotoSorter/Import",
+  "import_path": "./Import",
   "wanted_path": "./Wanted",
   "unwanted_path": "./Unwanted",
   "resize_size": 300,
@@ -17,5 +17,6 @@
     ".webp"
   ],
   "non_image_handling": "Move to Wanted",
-  "filename_conflict": "Counter"
+  "filename_conflict": "Counter",
+  "flatten_import_folder": true
 }
