@@ -1,0 +1,21 @@
+{
+  "import_path": "C:/Users/User/Desktop/Programming/Python/PhotoSorter/Import",
+  "wanted_path": "./Wanted",
+  "unwanted_path": "./Unwanted",
+  "resize_size": 300,
+  "white_threshold_percent": 40,
+  "white_pixel_min": 150,
+  "rename": false,
+  "verbose": true,
+  "recursive_scan": true,
+  "supported_extensions": [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".tiff",
+    ".webp"
+  ],
+  "non_image_handling": "Move to Wanted",
+  "filename_conflict": "Counter"
+}
