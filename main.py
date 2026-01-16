@@ -1223,6 +1223,11 @@ class PhotoSorterGUI:
 
 def main():
     """Main entry point."""
+    paths = ['Import', 'Wanted', 'Unwanted']
+    for path in paths:
+        if not os.path.exists(path):
+            os.makedirs(path)
+    
     root = tk.Tk()
     app = PhotoSorterGUI(root)
     
