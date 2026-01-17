@@ -3,7 +3,7 @@
   "wanted_path": "./Wanted",
   "unwanted_path": "./Unwanted",
   "resize_size": 300,
-  "white_threshold_percent": 50,
+  "white_threshold_percent": 40,
   "white_pixel_min": 150,
   "rename": false,
   "verbose": true,
