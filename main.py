@@ -335,6 +335,7 @@ class PhotoSorterGUI:
         # Create tabs
         self._create_config_tab()
         self._create_processing_tab()
+        self._create_duplicated_tab()
         self._create_import_tab()
         self._create_wanted_tab()
         self._create_unwanted_tab()
@@ -584,6 +585,79 @@ class PhotoSorterGUI:
             stats_frame, text='Ready', relief='sunken'
         )
         self.stats_label.pack(fill='x')
+    
+    def _create_duplicated_tab(self):
+        """Create Duplicated tab with duplicate set navigation."""
+        duplicated_frame = ttk.Frame(self.notebook)
+        self.notebook.add(duplicated_frame, text='Duplicated')
+        
+        # Main container
+        main_frame = ttk.Frame(duplicated_frame)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Progress indicator
+        progress_label = ttk.Label(main_frame, text='Duplicate Set #0 of 0', font=('Arial', 12, 'bold'))
+        progress_label.pack(pady=5)
+        setattr(self, 'duplicated_progress_label', progress_label)
+        
+        # Navigation frame with 4 arrows
+        nav_frame = ttk.Frame(main_frame)
+        nav_frame.pack(pady=5)
+        
+        # Outer arrows (set navigation)
+        ttk.Button(nav_frame, text='◀◀', width=4, command=lambda: self._navigate_duplicate_set(-1)).pack(side='left', padx=5)
+        ttk.Button(nav_frame, text='◀', width=4, command=lambda: self._navigate_duplicate_inner(-1)).pack(side='left', padx=5)
+        ttk.Button(nav_frame, text='▶', width=4, command=lambda: self._navigate_duplicate_inner(1)).pack(side='left', padx=5)
+        ttk.Button(nav_frame, text='▶▶', width=4, command=lambda: self._navigate_duplicate_set(1)).pack(side='left', padx=5)
+        
+        # Image display frame
+        image_frame = ttk.Frame(main_frame)
+        image_frame.pack(fill='both', expand=True, pady=10)
+        
+        image_label = ttk.Label(image_frame, text='No duplicates found', anchor='center')
+        image_label.pack(fill='both', expand=True)
+        setattr(self, 'duplicated_image_label', image_label)
+        
+        # Function bar
+        func_frame = ttk.LabelFrame(main_frame, text='Image Information', padding=10)
+        func_frame.pack(fill='x', pady=5)
+        
+        # Image count label (within set)
+        count_label = ttk.Label(func_frame, text='Image: 0/0')
+        count_label.grid(row=0, column=0, sticky='w', padx=5)
+        setattr(self, 'duplicated_count_label', count_label)
+        
+        # Image name and size label
+        name_label = ttk.Label(func_frame, text='Name: -')
+        name_label.grid(row=0, column=1, sticky='w', padx=20)
+        setattr(self, 'duplicated_name_label', name_label)
+        
+        # Metadata label
+        metadata_label = ttk.Label(func_frame, text='Metadata: -')
+        metadata_label.grid(row=1, column=0, columnspan=2, sticky='w', padx=5, pady=2)
+        setattr(self, 'duplicated_metadata_label', metadata_label)
+        
+        # Transfer buttons frame
+        transfer_frame = ttk.Frame(func_frame)
+        transfer_frame.grid(row=0, column=2, rowspan=2, sticky='ne', padx=5)
+        
+        # Transfer buttons
+        ttk.Button(transfer_frame, text='Transfer to Import', 
+                  command=lambda: self._transfer_duplicate_image('import')).pack(side='top', padx=2, pady=1)
+        ttk.Button(transfer_frame, text='Transfer to Wanted', 
+                  command=lambda: self._transfer_duplicate_image('wanted')).pack(side='top', padx=2, pady=1)
+        ttk.Button(transfer_frame, text='Transfer to Unwanted', 
+                  command=lambda: self._transfer_duplicate_image('unwanted')).pack(side='top', padx=2, pady=1)
+        ttk.Button(transfer_frame, text='Keep one only', 
+                  command=self._keep_one_duplicate).pack(side='top', padx=2, pady=1)
+        
+        # Initialize duplicate data
+        setattr(self, 'duplicate_groups', [])
+        setattr(self, 'current_set_index', 0)
+        setattr(self, 'current_image_index', 0)
+        
+        # Load duplicates when tab is selected (not on startup)
+        # self._load_duplicates()
     
     def _create_status_bar(self):
         """Create status bar at bottom."""
@@ -897,18 +971,23 @@ class PhotoSorterGUI:
         func_frame.pack(fill='x', pady=5)
         
         # Image count label
-        count_label = ttk.Label(func_frame, text='Images: 0')
+        count_label = ttk.Label(func_frame, text='Image: 0/0')
         count_label.grid(row=0, column=0, sticky='w', padx=5)
         setattr(self, f'{folder_key}_count_label', count_label)
         
-        # Image name label
+        # Image name and size label
         name_label = ttk.Label(func_frame, text='Name: -')
         name_label.grid(row=0, column=1, sticky='w', padx=20)
         setattr(self, f'{folder_key}_name_label', name_label)
         
+        # Metadata label
+        metadata_label = ttk.Label(func_frame, text='Metadata: -')
+        metadata_label.grid(row=1, column=0, columnspan=2, sticky='w', padx=5, pady=2)
+        setattr(self, f'{folder_key}_metadata_label', metadata_label)
+        
         # Transfer buttons frame
         transfer_frame = ttk.Frame(func_frame)
-        transfer_frame.grid(row=0, column=2, sticky='e', padx=5)
+        transfer_frame.grid(row=0, column=2, rowspan=2, sticky='ne', padx=5)
         
         # Create transfer buttons based on options
         for option in transfer_options:
@@ -984,6 +1063,9 @@ class PhotoSorterGUI:
         elif tab_text == 'Unwanted':
             self._active_image_folder_key = 'unwanted'
             self._load_images('unwanted')
+        elif tab_text == 'Duplicated':
+            self._active_image_folder_key = None
+            self._load_duplicates()
         else:
             self._active_image_folder_key = None
     
@@ -1006,7 +1088,7 @@ class PhotoSorterGUI:
         
         # Update UI
         count_label = getattr(self, f'{folder_key}_count_label')
-        count_label.config(text=f'Images: {len(image_files)}')
+        count_label.config(text=f'Image: 0/{len(image_files)}')
         
         if image_files:
             self._display_image(folder_key, 0)
@@ -1022,9 +1104,27 @@ class PhotoSorterGUI:
         image_path = images[index]
         setattr(self, f'{folder_key}_current_index', index)
         
-        # Update name label
+        # Update count label
+        count_label = getattr(self, f'{folder_key}_count_label')
+        count_label.config(text=f'Image: {index + 1}/{len(images)}')
+        
+        # Update name label with file size
         name_label = getattr(self, f'{folder_key}_name_label')
-        name_label.config(text=f'Name: {os.path.basename(image_path)}')
+        file_size = os.path.getsize(image_path) / (1024 * 1024)  # MB
+        name_label.config(text=f'Name: {os.path.basename(image_path)} ({file_size:.1f}MB)')
+        
+        # Update metadata label
+        metadata_label = getattr(self, f'{folder_key}_metadata_label')
+        sorter = PhotoSorter()  # Create instance to access metadata method
+        metadata = sorter._get_image_metadata(Path(image_path))
+        metadata_text = []
+        if 'width' in metadata and 'height' in metadata:
+            metadata_text.append(f"{metadata['width']}x{metadata['height']}")
+        if 'exif_date' in metadata:
+            metadata_text.append(f"Date: {metadata['exif_date']}")
+        if 'camera_model' in metadata:
+            metadata_text.append(f"Camera: {metadata['camera_model']}")
+        metadata_label.config(text=f'Metadata: {" | ".join(metadata_text)}' if metadata_text else 'Metadata: -')
         
         # Load and display image
         try:
@@ -1219,6 +1319,246 @@ class PhotoSorterGUI:
             
         except Exception as e:
             messagebox.showerror('Error', f'Failed to clear folder: {str(e)}')
+    
+    def _load_duplicates(self):
+        """Load duplicate groups from Wanted folder."""
+        wanted_path = self.config.get('wanted_path', './Wanted')
+        sorter = PhotoSorter()
+        duplicate_groups = sorter.find_duplicate_groups(wanted_path)
+        
+        setattr(self, 'duplicate_groups', duplicate_groups)
+        setattr(self, 'current_set_index', 0)
+        setattr(self, 'current_image_index', 0)
+        
+        # Update progress label
+        progress_label = getattr(self, 'duplicated_progress_label')
+        if duplicate_groups:
+            progress_label.config(text=f'Duplicate Set #1 of {len(duplicate_groups)}')
+        else:
+            progress_label.config(text='Duplicate Set #0 of 0')
+        
+        if duplicate_groups:
+            self._display_duplicate_image(0, 0)
+        else:
+            self._display_no_duplicates()
+    
+    def _display_duplicate_image(self, set_index, image_index):
+        """Display image from duplicate set."""
+        duplicate_groups = getattr(self, 'duplicate_groups')
+        if not duplicate_groups or set_index < 0 or set_index >= len(duplicate_groups):
+            return
+        
+        current_set = duplicate_groups[set_index]
+        if image_index < 0 or image_index >= len(current_set):
+            return
+        
+        image_path = current_set[image_index]
+        setattr(self, 'current_set_index', set_index)
+        setattr(self, 'current_image_index', image_index)
+        
+        # Update progress label
+        progress_label = getattr(self, 'duplicated_progress_label')
+        progress_label.config(text=f'Duplicate Set #{set_index + 1} of {len(duplicate_groups)}')
+        
+        # Update count label
+        count_label = getattr(self, 'duplicated_count_label')
+        count_label.config(text=f'Image: {image_index + 1}/{len(current_set)}')
+        
+        # Update name label with file size
+        name_label = getattr(self, 'duplicated_name_label')
+        file_size = os.path.getsize(image_path) / (1024 * 1024)  # MB
+        name_label.config(text=f'Name: {os.path.basename(image_path)} ({file_size:.1f}MB)')
+        
+        # Update metadata label
+        metadata_label = getattr(self, 'duplicated_metadata_label')
+        sorter = PhotoSorter()
+        metadata = sorter._get_image_metadata(Path(image_path))
+        metadata_text = []
+        if 'width' in metadata and 'height' in metadata:
+            metadata_text.append(f"{metadata['width']}x{metadata['height']}")
+        if 'exif_date' in metadata:
+            metadata_text.append(f"Date: {metadata['exif_date']}")
+        if 'camera_model' in metadata:
+            metadata_text.append(f"Camera: {metadata['camera_model']}")
+        metadata_label.config(text=f'Metadata: {" | ".join(metadata_text)}' if metadata_text else 'Metadata: -')
+        
+        # Load and display image
+        try:
+            img = Image.open(image_path)
+            
+            # Resize for display
+            w, h = img.size
+            new_w = max(1, int(w * 0.5))
+            new_h = max(1, int(h * 0.5))
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+            max_width, max_height = 700, 500
+            img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            
+            photo = ImageTk.PhotoImage(img)
+            image_label = getattr(self, 'duplicated_image_label')
+            image_label.config(image=photo, text='')
+            image_label.image = photo
+            
+        except Exception as e:
+            image_label = getattr(self, 'duplicated_image_label')
+            image_label.config(image='', text=f'Error loading image: {str(e)}')
+    
+    def _display_no_duplicates(self):
+        """Display message when no duplicates found."""
+        image_label = getattr(self, 'duplicated_image_label')
+        image_label.config(image='', text='No duplicates found in Wanted folder')
+        
+        count_label = getattr(self, 'duplicated_count_label')
+        count_label.config(text='Image: 0/0')
+        
+        name_label = getattr(self, 'duplicated_name_label')
+        name_label.config(text='Name: -')
+        
+        metadata_label = getattr(self, 'duplicated_metadata_label')
+        metadata_label.config(text='Metadata: -')
+    
+    def _navigate_duplicate_set(self, direction):
+        """Navigate between duplicate sets."""
+        duplicate_groups = getattr(self, 'duplicate_groups')
+        if not duplicate_groups:
+            return
+        
+        current_set_index = getattr(self, 'current_set_index')
+        new_set_index = (current_set_index + direction) % len(duplicate_groups)
+        self._display_duplicate_image(new_set_index, 0)
+    
+    def _navigate_duplicate_inner(self, direction):
+        """Navigate within current duplicate set."""
+        duplicate_groups = getattr(self, 'duplicate_groups')
+        if not duplicate_groups:
+            return
+        
+        current_set_index = getattr(self, 'current_set_index')
+        current_image_index = getattr(self, 'current_image_index')
+        current_set = duplicate_groups[current_set_index]
+        
+        new_image_index = (current_image_index + direction) % len(current_set)
+        self._display_duplicate_image(current_set_index, new_image_index)
+    
+    def _transfer_duplicate_image(self, target_folder_key):
+        """Transfer current duplicate image to target folder."""
+        duplicate_groups = getattr(self, 'duplicate_groups')
+        current_set_index = getattr(self, 'current_set_index')
+        current_image_index = getattr(self, 'current_image_index')
+        
+        if not duplicate_groups or current_set_index >= len(duplicate_groups):
+            messagebox.showwarning('Warning', 'No duplicate set selected')
+            return
+        
+        current_set = duplicate_groups[current_set_index]
+        if current_image_index >= len(current_set):
+            messagebox.showwarning('Warning', 'No image selected')
+            return
+        
+        source_path = current_set[current_image_index]
+        
+        # Get target folder
+        if target_folder_key == 'import':
+            target_folder = self.config.get('import_path', './Import')
+        elif target_folder_key == 'wanted':
+            target_folder = self.config.get('wanted_path', './Wanted')
+        elif target_folder_key == 'unwanted':
+            target_folder = self.config.get('unwanted_path', './Unwanted')
+        else:
+            return
+        
+        # Move file
+        try:
+            base_name = os.path.basename(source_path)
+            dest_path = os.path.join(target_folder, base_name)
+            
+            # Handle conflicts
+            if os.path.exists(dest_path):
+                name, ext = os.path.splitext(base_name)
+                counter = 1
+                while os.path.exists(dest_path):
+                    dest_path = os.path.join(target_folder, f"{name}_{counter}{ext}")
+                    counter += 1
+            
+            shutil.move(source_path, dest_path)
+            
+            # Remove from duplicate set
+            current_set.pop(current_image_index)
+            
+            # If set is empty, remove it
+            if not current_set:
+                duplicate_groups.pop(current_set_index)
+                if current_set_index >= len(duplicate_groups):
+                    current_set_index = max(0, len(duplicate_groups) - 1)
+                current_image_index = 0
+            else:
+                if current_image_index >= len(current_set):
+                    current_image_index = len(current_set) - 1
+            
+            # Update display
+            if duplicate_groups:
+                self._display_duplicate_image(current_set_index, current_image_index)
+            else:
+                self._display_no_duplicates()
+                
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to transfer image: {str(e)}')
+    
+    def _keep_one_duplicate(self):
+        """Keep the largest file in current duplicate set, delete others."""
+        duplicate_groups = getattr(self, 'duplicate_groups')
+        current_set_index = getattr(self, 'current_set_index')
+        
+        if not duplicate_groups or current_set_index >= len(duplicate_groups):
+            messagebox.showwarning('Warning', 'No duplicate set selected')
+            return
+        
+        current_set = duplicate_groups[current_set_index]
+        if len(current_set) < 2:
+            messagebox.showinfo('Info', 'Only one image in this set')
+            return
+        
+        # Find image with largest file size
+        largest_index = 0
+        largest_size = 0
+        for i, img_path in enumerate(current_set):
+            try:
+                size = os.path.getsize(img_path)
+                if size > largest_size:
+                    largest_size = size
+                    largest_index = i
+            except:
+                continue
+        
+        # Keep the largest, delete others
+        kept_path = current_set[largest_index]
+        deleted_paths = []
+        
+        for i, img_path in enumerate(current_set):
+            if i != largest_index:
+                try:
+                    os.remove(img_path)
+                    deleted_paths.append(os.path.basename(img_path))
+                except Exception as e:
+                    print(f"Error deleting {img_path}: {e}")
+        
+        # Remove the set from groups
+        duplicate_groups.pop(current_set_index)
+        
+        # Update indices
+        if current_set_index >= len(duplicate_groups):
+            current_set_index = max(0, len(duplicate_groups) - 1)
+        current_image_index = 0
+        
+        # Update display
+        if duplicate_groups:
+            self._display_duplicate_image(current_set_index, 0)
+        else:
+            self._display_no_duplicates()
+        
+        # Show confirmation
+        messagebox.showinfo('Success', f'Kept: {os.path.basename(kept_path)}\nDeleted: {", ".join(deleted_paths)}')
 
 
 def main():
@@ -1236,7 +1576,6 @@ def main():
     root.bind('<Control-s>', lambda e: app._save_config())
     
     root.mainloop()
-
 
 if __name__ == '__main__':
     main()

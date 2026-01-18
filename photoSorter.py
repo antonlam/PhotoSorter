@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime
 from PIL import Image
 from PIL.ExifTags import TAGS
+import imagehash
 
 
 class PhotoSorter:
@@ -180,6 +181,131 @@ class PhotoSorter:
                 
         except Exception as e:
             return None, f"Error reading EXIF: {str(e)}"
+    
+    def _get_image_metadata(self, image_path):
+        """
+        Extract basic metadata from image file.
+        
+        Args:
+            image_path: Path to image file
+            
+        Returns:
+            Dict with metadata (size, dimensions, exif_date, etc.)
+        """
+        metadata = {}
+        try:
+            # File size
+            stat = image_path.stat()
+            metadata['file_size'] = stat.st_size
+            metadata['file_size_mb'] = stat.st_size / (1024 * 1024)
+            
+            # Image dimensions
+            with Image.open(image_path) as img:
+                metadata['width'], metadata['height'] = img.size
+                
+                # EXIF date
+                exif_data = img._getexif()
+                if exif_data:
+                    datetime_original = exif_data.get(36867)  # DateTimeOriginal
+                    if datetime_original:
+                        try:
+                            datetime_obj = datetime.strptime(datetime_original, "%Y:%m:%d %H:%M:%S")
+                            metadata['exif_date'] = datetime_obj.strftime("%Y-%m-%d %H:%M:%S")
+                        except:
+                            pass
+                            
+                    # Camera model
+                    model = exif_data.get(272)  # Model
+                    if model:
+                        metadata['camera_model'] = model
+                        
+        except Exception as e:
+            metadata['error'] = str(e)
+            
+        return metadata
+    
+    def _compute_image_hash(self, image_path, hash_size=8):
+        """
+        Compute perceptual hash for image comparison.
+        
+        Args:
+            image_path: Path to image file
+            hash_size: Size of hash (higher = more precise but slower)
+            
+        Returns:
+            ImageHash object or None if error
+        """
+        try:
+            with Image.open(image_path) as img:
+                # Resize to standard size for consistent hashing
+                img_resized = img.resize((self.RESIZE_SIZE, self.RESIZE_SIZE), Image.Resampling.LANCZOS)
+                # Convert to grayscale for better hash consistency
+                img_gray = img_resized.convert('L')
+                # Compute perceptual hash
+                return imagehash.phash(img_gray, hash_size=hash_size)
+        except Exception as e:
+            print(f"Error computing hash for {image_path}: {e}")
+            return None
+    
+    def find_duplicate_groups(self, folder_path, similarity_threshold=0.9):
+        """
+        Find groups of duplicate images in a folder using perceptual hashing.
+        
+        Args:
+            folder_path: Path to folder containing images
+            similarity_threshold: Threshold for considering images similar (0-1)
+            
+        Returns:
+            List of duplicate groups, each group is a list of image paths
+        """
+        folder = Path(folder_path)
+        if not folder.exists():
+            return []
+        
+        # Get all image files
+        image_files = []
+        for ext in self.SUPPORTED_EXTENSIONS:
+            image_files.extend(folder.glob(f'*{ext}'))
+            image_files.extend(folder.glob(f'*{ext.upper()}'))
+        
+        if len(image_files) < 2:
+            return []
+        
+        # Compute hashes for all images
+        hashes = {}
+        for img_path in image_files:
+            hash_val = self._compute_image_hash(img_path)
+            if hash_val:
+                hashes[img_path] = hash_val
+        
+        # Group similar images
+        duplicate_groups = []
+        processed = set()
+        
+        for img1, hash1 in hashes.items():
+            if img1 in processed:
+                continue
+                
+            group = [img1]
+            processed.add(img1)
+            
+            for img2, hash2 in hashes.items():
+                if img2 in processed:
+                    continue
+                    
+                # Calculate similarity (1 - hamming_distance / max_distance)
+                distance = hash1 - hash2
+                max_distance = len(hash1.hash) ** 2  # For hash_size=8, max_distance=64
+                similarity = 1 - (distance / max_distance)
+                
+                if similarity >= similarity_threshold:
+                    group.append(img2)
+                    processed.add(img2)
+            
+            if len(group) > 1:
+                duplicate_groups.append(group)
+        
+        return duplicate_groups
     
     def _generate_new_filename(self, original_path, date_prefix):
         """
