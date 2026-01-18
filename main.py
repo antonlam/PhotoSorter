@@ -590,6 +590,7 @@ class PhotoSorterGUI:
         """Create Duplicated tab with duplicate set navigation."""
         duplicated_frame = ttk.Frame(self.notebook)
         self.notebook.add(duplicated_frame, text='Duplicated')
+        self.duplicated_tab_index = self.notebook.index('end') - 1  # Store tab index
         
         # Main container
         main_frame = ttk.Frame(duplicated_frame)
@@ -605,10 +606,21 @@ class PhotoSorterGUI:
         nav_frame.pack(pady=5)
         
         # Outer arrows (set navigation)
-        ttk.Button(nav_frame, text='◀◀', width=4, command=lambda: self._navigate_duplicate_set(-1)).pack(side='left', padx=5)
-        ttk.Button(nav_frame, text='◀', width=4, command=lambda: self._navigate_duplicate_inner(-1)).pack(side='left', padx=5)
-        ttk.Button(nav_frame, text='▶', width=4, command=lambda: self._navigate_duplicate_inner(1)).pack(side='left', padx=5)
-        ttk.Button(nav_frame, text='▶▶', width=4, command=lambda: self._navigate_duplicate_set(1)).pack(side='left', padx=5)
+        prev_set_btn = ttk.Button(nav_frame, text='◀◀', width=4, command=lambda: self._navigate_duplicate_set(-1))
+        prev_set_btn.pack(side='left', padx=5)
+        ToolTip(prev_set_btn, 'Previous duplicate set')
+        
+        prev_img_btn = ttk.Button(nav_frame, text='◀', width=4, command=lambda: self._navigate_duplicate_inner(-1))
+        prev_img_btn.pack(side='left', padx=5)
+        ToolTip(prev_img_btn, 'Previous image in set')
+        
+        next_img_btn = ttk.Button(nav_frame, text='▶', width=4, command=lambda: self._navigate_duplicate_inner(1))
+        next_img_btn.pack(side='left', padx=5)
+        ToolTip(next_img_btn, 'Next image in set')
+        
+        next_set_btn = ttk.Button(nav_frame, text='▶▶', width=4, command=lambda: self._navigate_duplicate_set(1))
+        next_set_btn.pack(side='left', padx=5)
+        ToolTip(next_set_btn, 'Next duplicate set')
         
         # Image display frame
         image_frame = ttk.Frame(main_frame)
@@ -618,38 +630,38 @@ class PhotoSorterGUI:
         image_label.pack(fill='both', expand=True)
         setattr(self, 'duplicated_image_label', image_label)
         
-        # Function bar
+        # Function bar - horizontal layout
         func_frame = ttk.LabelFrame(main_frame, text='Image Information', padding=10)
         func_frame.pack(fill='x', pady=5)
         
-        # Image count label (within set)
-        count_label = ttk.Label(func_frame, text='Image: 0/0')
-        count_label.grid(row=0, column=0, sticky='w', padx=5)
+        # Create a horizontal frame for all info and buttons
+        info_frame = ttk.Frame(func_frame)
+        info_frame.pack(fill='x')
+        
+        # Image count label
+        count_label = ttk.Label(info_frame, text='Image: 0/0')
+        count_label.pack(side='left', padx=(0,10))
         setattr(self, 'duplicated_count_label', count_label)
         
         # Image name and size label
-        name_label = ttk.Label(func_frame, text='Name: -')
-        name_label.grid(row=0, column=1, sticky='w', padx=20)
+        name_label = ttk.Label(info_frame, text='Name: -')
+        name_label.pack(side='left', padx=(0,10))
         setattr(self, 'duplicated_name_label', name_label)
         
         # Metadata label
-        metadata_label = ttk.Label(func_frame, text='Metadata: -')
-        metadata_label.grid(row=1, column=0, columnspan=2, sticky='w', padx=5, pady=2)
+        metadata_label = ttk.Label(info_frame, text='Metadata: -')
+        metadata_label.pack(side='left', padx=(0,20))
         setattr(self, 'duplicated_metadata_label', metadata_label)
         
-        # Transfer buttons frame
-        transfer_frame = ttk.Frame(func_frame)
-        transfer_frame.grid(row=0, column=2, rowspan=2, sticky='ne', padx=5)
+        # Transfer buttons frame - horizontal
+        transfer_frame = ttk.Frame(info_frame)
+        transfer_frame.pack(side='right')
         
-        # Transfer buttons
-        ttk.Button(transfer_frame, text='Transfer to Import', 
-                  command=lambda: self._transfer_duplicate_image('import')).pack(side='top', padx=2, pady=1)
-        ttk.Button(transfer_frame, text='Transfer to Wanted', 
-                  command=lambda: self._transfer_duplicate_image('wanted')).pack(side='top', padx=2, pady=1)
-        ttk.Button(transfer_frame, text='Transfer to Unwanted', 
-                  command=lambda: self._transfer_duplicate_image('unwanted')).pack(side='top', padx=2, pady=1)
-        ttk.Button(transfer_frame, text='Keep one only', 
-                  command=self._keep_one_duplicate).pack(side='top', padx=2, pady=1)
+        # Keep one only button
+        keep_btn = ttk.Button(transfer_frame, text='Keep one only', 
+                             command=self._keep_one_duplicate)
+        keep_btn.pack(side='left', padx=2)
+        ToolTip(keep_btn, 'Keep the largest file in this set, delete others')
         
         # Initialize duplicate data
         setattr(self, 'duplicate_groups', [])
@@ -777,6 +789,13 @@ class PhotoSorterGUI:
             messagebox.showerror('Error', 'Invalid paths configuration')
             return
         
+        # Remove duplicate cache
+        if os.path.exists('duplicate_cache.txt'):
+            try:
+                os.remove('duplicate_cache.txt')
+            except:
+                pass
+        
         self._update_status('Processing images...')
         self.processing = True
         self.start_button.config(state='disabled')
@@ -804,6 +823,13 @@ class PhotoSorterGUI:
     
     def _start_dry_run(self):
         """Start dry-run (scan without moving)."""
+        # Remove duplicate cache
+        if os.path.exists('duplicate_cache.txt'):
+            try:
+                os.remove('duplicate_cache.txt')
+            except:
+                pass
+        
         self._update_status('Starting dry-run...')
         self.processing = True
         self.start_button.config(state='disabled')
@@ -1014,6 +1040,7 @@ class PhotoSorterGUI:
         """Create Import tab with image viewer."""
         import_frame = ttk.Frame(self.notebook)
         self.notebook.add(import_frame, text='Import')
+        self.import_tab_index = self.notebook.index('end') - 1
         self._create_image_viewer_tab(
             import_frame, 
             'import', 
@@ -1027,6 +1054,7 @@ class PhotoSorterGUI:
         """Create Wanted tab with image viewer."""
         wanted_frame = ttk.Frame(self.notebook)
         self.notebook.add(wanted_frame, text='Wanted')
+        self.wanted_tab_index = self.notebook.index('end') - 1
         self._create_image_viewer_tab(
             wanted_frame,
             'wanted',
@@ -1040,6 +1068,7 @@ class PhotoSorterGUI:
         """Create Unwanted tab with image viewer."""
         unwanted_frame = ttk.Frame(self.notebook)
         self.notebook.add(unwanted_frame, text='Unwanted')
+        self.unwanted_tab_index = self.notebook.index('end') - 1
         self._create_image_viewer_tab(
             unwanted_frame,
             'unwanted',
@@ -1054,16 +1083,16 @@ class PhotoSorterGUI:
         selected_tab = self.notebook.index(self.notebook.select())
         tab_text = self.notebook.tab(selected_tab, 'text')
         
-        if tab_text == 'Import':
+        if tab_text.startswith('Import'):
             self._active_image_folder_key = 'import'
             self._load_images('import')
-        elif tab_text == 'Wanted':
+        elif tab_text.startswith('Wanted'):
             self._active_image_folder_key = 'wanted'
             self._load_images('wanted')
-        elif tab_text == 'Unwanted':
+        elif tab_text.startswith('Unwanted'):
             self._active_image_folder_key = 'unwanted'
             self._load_images('unwanted')
-        elif tab_text == 'Duplicated':
+        elif tab_text.startswith('Duplicated'):
             self._active_image_folder_key = None
             self._load_duplicates()
         else:
@@ -1089,6 +1118,11 @@ class PhotoSorterGUI:
         # Update UI
         count_label = getattr(self, f'{folder_key}_count_label')
         count_label.config(text=f'Image: 0/{len(image_files)}')
+        
+        # Update tab title with count
+        tab_index = getattr(self, f'{folder_key}_tab_index')
+        tab_name = folder_key.capitalize()
+        self.notebook.tab(tab_index, text=f'{tab_name} ({len(image_files)})')
         
         if image_files:
             self._display_image(folder_key, 0)
@@ -1161,17 +1195,17 @@ class PhotoSorterGUI:
             self._active_image_folder_key = None
             return
 
-        if tab_text == 'Import':
+        if tab_text.startswith('Import'):
             self._active_image_folder_key = 'import'
-        elif tab_text == 'Wanted':
+        elif tab_text.startswith('Wanted'):
             self._active_image_folder_key = 'wanted'
-        elif tab_text == 'Unwanted':
+        elif tab_text.startswith('Unwanted'):
             self._active_image_folder_key = 'unwanted'
         else:
             self._active_image_folder_key = None
 
     def _bind_image_navigation_keys(self):
-        """Bind Left/Right arrow keys to navigate images in the active image tab."""
+        """Bind Left/Right arrow keys and A/D keys to navigate images in the active image tab."""
         def should_ignore_keypress():
             w = self.root.focus_get()
             if w is None:
@@ -1183,20 +1217,32 @@ class PhotoSorterGUI:
         def on_left(event=None):
             if should_ignore_keypress():
                 return
-            fk = self._active_image_folder_key
-            if fk in {'import', 'wanted', 'unwanted'}:
-                self._navigate_image(fk, -1)
+            selected_tab = self.notebook.index(self.notebook.select())
+            tab_text = self.notebook.tab(selected_tab, 'text')
+            if tab_text.startswith('Import') or tab_text.startswith('Wanted') or tab_text.startswith('Unwanted'):
+                fk = self._active_image_folder_key
+                if fk in {'import', 'wanted', 'unwanted'}:
+                    self._navigate_image(fk, -1)
+            elif tab_text.startswith('Duplicated'):
+                self._navigate_duplicate_inner(-1)
 
         def on_right(event=None):
             if should_ignore_keypress():
                 return
-            fk = self._active_image_folder_key
-            if fk in {'import', 'wanted', 'unwanted'}:
-                self._navigate_image(fk, 1)
+            selected_tab = self.notebook.index(self.notebook.select())
+            tab_text = self.notebook.tab(selected_tab, 'text')
+            if tab_text.startswith('Import') or tab_text.startswith('Wanted') or tab_text.startswith('Unwanted'):
+                fk = self._active_image_folder_key
+                if fk in {'import', 'wanted', 'unwanted'}:
+                    self._navigate_image(fk, 1)
+            elif tab_text.startswith('Duplicated'):
+                self._navigate_duplicate_inner(1)
 
         # Bind on root so it works regardless of where focus is (except entries/text)
         self.root.bind('<Left>', on_left)
         self.root.bind('<Right>', on_right)
+        self.root.bind('a', on_left)
+        self.root.bind('d', on_right)
     
     def _display_no_image(self, folder_key):
         """Display message when no images found."""
@@ -1272,7 +1318,12 @@ class PhotoSorterGUI:
             
             # Update UI
             count_label = getattr(self, f'{folder_key}_count_label')
-            count_label.config(text=f'Images: {len(images)}')
+            count_label.config(text=f'Image: {current_index + 1 if images else 0}/{len(images)}')
+            
+            # Update tab title
+            tab_index = getattr(self, f'{folder_key}_tab_index')
+            tab_name = folder_key.capitalize()
+            self.notebook.tab(tab_index, text=f'{tab_name} ({len(images)})')
             
             if images:
                 self._display_image(folder_key, current_index)
@@ -1322,9 +1373,54 @@ class PhotoSorterGUI:
     
     def _load_duplicates(self):
         """Load duplicate groups from Wanted folder."""
+        DUPLICATE_CACHE_FILE = 'duplicate_cache.txt'
+        
+        # Check if cache exists
+        if os.path.exists(DUPLICATE_CACHE_FILE):
+            try:
+                duplicate_groups = []
+                with open(DUPLICATE_CACHE_FILE, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            paths = [path.strip() for path in line.split(',')]
+                            duplicate_groups.append(paths)
+                
+                setattr(self, 'duplicate_groups', duplicate_groups)
+                setattr(self, 'current_set_index', 0)
+                setattr(self, 'current_image_index', 0)
+                
+                # Update progress label
+                progress_label = getattr(self, 'duplicated_progress_label')
+                if duplicate_groups:
+                    progress_label.config(text=f'Duplicate Set #1 of {len(duplicate_groups)}')
+                else:
+                    progress_label.config(text='Duplicate Set #0 of 0')
+                
+                # Update tab title
+                self.notebook.tab(self.duplicated_tab_index, text=f'Duplicated ({len(duplicate_groups)} sets)')
+                
+                if duplicate_groups:
+                    self._display_duplicate_image(0, 0)
+                else:
+                    self._display_no_duplicates()
+                return
+            except Exception as e:
+                print(f"Error loading duplicate cache: {e}")
+        
+        # No cache, compute duplicates
         wanted_path = self.config.get('wanted_path', './Wanted')
         sorter = PhotoSorter()
         duplicate_groups = sorter.find_duplicate_groups(wanted_path)
+        
+        # Save to cache
+        try:
+            with open(DUPLICATE_CACHE_FILE, 'w') as f:
+                for group in duplicate_groups:
+                    line = ','.join(str(path) for path in group)
+                    f.write(line + '\n')
+        except Exception as e:
+            print(f"Error saving duplicate cache: {e}")
         
         setattr(self, 'duplicate_groups', duplicate_groups)
         setattr(self, 'current_set_index', 0)
@@ -1336,6 +1432,9 @@ class PhotoSorterGUI:
             progress_label.config(text=f'Duplicate Set #1 of {len(duplicate_groups)}')
         else:
             progress_label.config(text='Duplicate Set #0 of 0')
+        
+        # Update tab title
+        self.notebook.tab(self.duplicated_tab_index, text=f'Duplicated ({len(duplicate_groups)} sets)')
         
         if duplicate_groups:
             self._display_duplicate_image(0, 0)
