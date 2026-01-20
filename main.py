@@ -43,6 +43,8 @@ class ConfigManager:
         'resize_size': 300,
         'white_threshold_percent': 70,
         'white_pixel_min': 240,
+        'dark_threshold_percent': 70,
+        'dark_pixel_max': 50,
         'rename': True,
         'verbose': True,
         'recursive_scan': True,
@@ -127,6 +129,8 @@ class PhotoSorterWorker(threading.Thread):
             sorter.RESIZE_SIZE = self.config['resize_size']
             sorter.WHITE_THRESHOLD_PERCENT = self.config['white_threshold_percent']
             sorter.WHITE_PIXEL_MIN = self.config['white_pixel_min']
+            sorter.DARK_THRESHOLD_PERCENT = self.config['dark_threshold_percent']
+            sorter.DARK_PIXEL_MAX = self.config['dark_pixel_max']
             
             # Update supported extensions
             sorter.SUPPORTED_EXTENSIONS = set(self.config['supported_extensions'])
@@ -136,7 +140,7 @@ class PhotoSorterWorker(threading.Thread):
             self.output_queue.put(('info', f"Import path: {self.config['import_path']}"))
             self.output_queue.put(('info', f"Wanted path: {self.config['wanted_path']}"))
             self.output_queue.put(('info', f"Unwanted path: {self.config['unwanted_path']}"))
-            self.output_queue.put(('info', f"Thresholds: {self.config['white_threshold_percent']}% white, {self.config['white_pixel_min']} RGB min"))
+            self.output_queue.put(('info', f"Thresholds: {self.config['white_threshold_percent']}% white ({self.config['white_pixel_min']} RGB min), {self.config['dark_threshold_percent']}% dark ({self.config['dark_pixel_max']} RGB max)"))
             self.output_queue.put(('info', ''))
             
             if self.dry_run:
@@ -412,6 +416,26 @@ class PhotoSorterGUI:
             thresh_frame, from_=0, to=255, textvariable=self.white_pixel_var, width=10
         )
         self.white_pixel_spin.grid(row=2, column=1, sticky='w', padx=5)
+        
+        # Dark Threshold
+        ttk.Label(thresh_frame, text='Dark Threshold (%):').grid(row=3, column=0, sticky='w')
+        self.dark_thresh_var = tk.IntVar(value=self.config['dark_threshold_percent'])
+        self.dark_thresh_scale = ttk.Scale(
+            thresh_frame, from_=10, to=100, orient='horizontal',
+            variable=self.dark_thresh_var
+        )
+        self.dark_thresh_scale.grid(row=3, column=1, sticky='ew', padx=5)
+        self.dark_thresh_label = ttk.Label(thresh_frame, text=f"{self.config['dark_threshold_percent']}%")
+        self.dark_thresh_label.grid(row=3, column=2, padx=5)
+        self.dark_thresh_var.trace('w', self._update_dark_thresh_label)
+        
+        # Dark Pixel Max
+        ttk.Label(thresh_frame, text='Dark Pixel Max RGB (0-255):').grid(row=4, column=0, sticky='w')
+        self.dark_pixel_var = tk.IntVar(value=self.config['dark_pixel_max'])
+        self.dark_pixel_spin = ttk.Spinbox(
+            thresh_frame, from_=0, to=255, textvariable=self.dark_pixel_var, width=10
+        )
+        self.dark_pixel_spin.grid(row=4, column=1, sticky='w', padx=5)
         
         thresh_frame.columnconfigure(1, weight=1)
         
@@ -707,6 +731,10 @@ class PhotoSorterGUI:
         """Update white threshold label."""
         self.white_thresh_label.config(text=f"{self.white_thresh_var.get()}%")
     
+    def _update_dark_thresh_label(self, *args):
+        """Update dark threshold label."""
+        self.dark_thresh_label.config(text=f"{self.dark_thresh_var.get()}%")
+    
     def _save_config(self):
         """Save current configuration."""
         self.config.update({
@@ -716,6 +744,8 @@ class PhotoSorterGUI:
             'resize_size': self.resize_var.get(),
             'white_threshold_percent': self.white_thresh_var.get(),
             'white_pixel_min': self.white_pixel_var.get(),
+            'dark_threshold_percent': self.dark_thresh_var.get(),
+            'dark_pixel_max': self.dark_pixel_var.get(),
             'rename': self.rename_var.get(),
             'verbose': self.verbose_var.get(),
             'recursive_scan': self.recursive_var.get(),
@@ -742,6 +772,8 @@ class PhotoSorterGUI:
         self.resize_var.set(self.config['resize_size'])
         self.white_thresh_var.set(self.config['white_threshold_percent'])
         self.white_pixel_var.set(self.config['white_pixel_min'])
+        self.dark_thresh_var.set(self.config['dark_threshold_percent'])
+        self.dark_pixel_var.set(self.config['dark_pixel_max'])
         self.rename_var.set(self.config['rename'])
         self.verbose_var.set(self.config['verbose'])
         self.recursive_var.set(self.config['recursive_scan'])
@@ -774,6 +806,8 @@ class PhotoSorterGUI:
             'resize_size': self.resize_var.get(),
             'white_threshold_percent': self.white_thresh_var.get(),
             'white_pixel_min': self.white_pixel_var.get(),
+            'dark_threshold_percent': self.dark_thresh_var.get(),
+            'dark_pixel_max': self.dark_pixel_var.get(),
             'rename': self.rename_var.get(),
             'verbose': self.verbose_var.get(),
             'flatten_import_folder': self.flatten_import_var.get(),
@@ -812,6 +846,8 @@ class PhotoSorterGUI:
             'resize_size': self.resize_var.get(),
             'white_threshold_percent': self.white_thresh_var.get(),
             'white_pixel_min': self.white_pixel_var.get(),
+            'dark_threshold_percent': self.dark_thresh_var.get(),
+            'dark_pixel_max': self.dark_pixel_var.get(),
             'rename': self.rename_var.get(),
             'verbose': self.verbose_var.get(),
             'flatten_import_folder': self.flatten_import_var.get(),
@@ -846,6 +882,8 @@ class PhotoSorterGUI:
             'resize_size': self.resize_var.get(),
             'white_threshold_percent': self.white_thresh_var.get(),
             'white_pixel_min': self.white_pixel_var.get(),
+            'dark_threshold_percent': self.dark_thresh_var.get(),
+            'dark_pixel_max': self.dark_pixel_var.get(),
             'rename': self.rename_var.get(),
             'verbose': self.verbose_var.get(),
             'flatten_import_folder': self.flatten_import_var.get(),

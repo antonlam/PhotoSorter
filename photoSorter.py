@@ -28,6 +28,8 @@ class PhotoSorter:
     RESIZE_SIZE = 300
     WHITE_THRESHOLD_PERCENT = 40
     WHITE_PIXEL_MIN = 150  # R, G, B all >= 240 for white
+    DARK_THRESHOLD_PERCENT = 40
+    DARK_PIXEL_MAX = 50  # R, G, B all <= 50 for dark
     
     # Supported image extensions (case-insensitive)
     SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
@@ -145,6 +147,47 @@ class PhotoSorter:
             is_white = white_percent > self.WHITE_THRESHOLD_PERCENT
             
             return is_white, white_percent, None
+            
+        except Exception as e:
+            return False, 0, f"Error analyzing image: {str(e)}"
+    
+    def _is_dark_background(self, image_path):
+        """
+        Analyze image to determine if it has dominant dark background.
+        
+        Args:
+            image_path: Path to image file
+            
+        Returns:
+            Tuple of (is_dark: bool, dark_percent: float, error: str or None)
+        """
+        try:
+            # Load image with cv2
+            img = cv2.imread(str(image_path))
+            
+            if img is None:
+                return False, 0, "Failed to load image with cv2"
+            
+            # Resize for faster processing
+            img_resized = cv2.resize(img, (self.RESIZE_SIZE, self.RESIZE_SIZE), 
+                                    interpolation=cv2.INTER_AREA)
+            
+            # Convert BGR to RGB-compatible format (cv2 uses BGR)
+            # Check pixels where B <= 50 AND G <= 50 AND R <= 50
+            b, g, r = cv2.split(img_resized)
+            
+            # Count dark pixels (all channels <= 50)
+            dark_mask = (b <= self.DARK_PIXEL_MAX) & \
+                       (g <= self.DARK_PIXEL_MAX) & \
+                       (r <= self.DARK_PIXEL_MAX)
+            
+            dark_count = cv2.countNonZero(dark_mask.astype('uint8'))
+            total_pixels = self.RESIZE_SIZE * self.RESIZE_SIZE
+            dark_percent = (dark_count / total_pixels) * 100
+            
+            is_dark = dark_percent > self.DARK_THRESHOLD_PERCENT
+            
+            return is_dark, dark_percent, None
             
         except Exception as e:
             return False, 0, f"Error analyzing image: {str(e)}"
@@ -415,34 +458,64 @@ class PhotoSorter:
                         print(f"  ✗ {msg}")
                         self.stats['errors'] += 1
                 else:
-                    # Wanted: try to extract EXIF date for renaming if rename is enabled
-                    if self.verbose:
-                        print(f"  White background: {white_percent:.1f}% - Wanted")
+                    # Check for dark background
+                    is_dark, dark_percent, dark_error = self._is_dark_background(image_path)
                     
-                    new_filename = None
-                    if self.rename:
-                        date_prefix, exif_error = self._get_exif_datetime(image_path)
-                        
-                        if date_prefix:
-                            new_filename = self._generate_new_filename(image_path, date_prefix)
+                    if dark_error:
+                        # If dark analysis fails, treat as neither
+                        if self.verbose:
+                            print(f"  White background: {white_percent:.1f}% - Dark analysis failed - Unwanted")
+                        success, msg, _ = self._move_image(image_path, is_wanted=False)
+                        if success:
                             if self.verbose:
-                                print(f"  EXIF date found: {date_prefix}")
+                                print(f"  ✓ {msg}")
+                            self.stats['unwanted'] += 1
+                        else:
+                            print(f"  ✗ {msg}")
+                            self.stats['errors'] += 1
+                        continue
+                    
+                    if is_dark:
+                        # Wanted: dark background dominant
+                        if self.verbose:
+                            print(f"  Dark background: {dark_percent:.1f}% - Wanted")
+                        
+                        new_filename = None
+                        if self.rename:
+                            date_prefix, exif_error = self._get_exif_datetime(image_path)
+                            
+                            if date_prefix:
+                                new_filename = self._generate_new_filename(image_path, date_prefix)
+                                if self.verbose:
+                                    print(f"  EXIF date found: {date_prefix}")
+                            else:
+                                if self.verbose:
+                                    print(f"  No EXIF DateTimeOriginal: {exif_error if exif_error else 'N/A'}")
                         else:
                             if self.verbose:
-                                print(f"  No EXIF DateTimeOriginal: {exif_error if exif_error else 'N/A'}")
+                                print(f"  Rename disabled - keeping original filename")
+                        
+                        success, msg, dest_filename = self._move_image(image_path, is_wanted=True, 
+                                                       new_filename=new_filename)
+                        if success:
+                            if self.verbose:
+                                print(f"  ✓ {msg}")
+                            self.stats['wanted'] += 1
+                        else:
+                            print(f"  ✗ {msg}")
+                            self.stats['errors'] += 1
                     else:
+                        # Neither white nor dark dominant - unwanted
                         if self.verbose:
-                            print(f"  Rename disabled - keeping original filename")
-                    
-                    success, msg, dest_filename = self._move_image(image_path, is_wanted=True, 
-                                                   new_filename=new_filename)
-                    if success:
-                        if self.verbose:
-                            print(f"  ✓ {msg}")
-                        self.stats['wanted'] += 1
-                    else:
-                        print(f"  ✗ {msg}")
-                        self.stats['errors'] += 1
+                            print(f"  White: {white_percent:.1f}%, Dark: {dark_percent:.1f}% - Unwanted")
+                        success, msg, _ = self._move_image(image_path, is_wanted=False)
+                        if success:
+                            if self.verbose:
+                                print(f"  ✓ {msg}")
+                            self.stats['unwanted'] += 1
+                        else:
+                            print(f"  ✗ {msg}")
+                            self.stats['errors'] += 1
                 
             except Exception as e:
                 print(f"✗ Unexpected error: {str(e)}")
