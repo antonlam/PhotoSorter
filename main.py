@@ -997,23 +997,23 @@ class PhotoSorterGUI:
         func_frame.pack(fill='x', pady=5)
         
         # Image count label
-        count_label = ttk.Label(func_frame, text='Image: 0/0')
+        count_label = ttk.Label(func_frame, text='Image: 0/0', width=20)
         count_label.grid(row=0, column=0, sticky='w', padx=5)
         setattr(self, f'{folder_key}_count_label', count_label)
         
         # Image name and size label
-        name_label = ttk.Label(func_frame, text='Name: -')
+        name_label = ttk.Label(func_frame, text='Name: -', width=40)
         name_label.grid(row=0, column=1, sticky='w', padx=20)
         setattr(self, f'{folder_key}_name_label', name_label)
         
         # Metadata label
-        metadata_label = ttk.Label(func_frame, text='Metadata: -')
+        metadata_label = ttk.Label(func_frame, text='Metadata: -', width=35)
         metadata_label.grid(row=1, column=0, columnspan=2, sticky='w', padx=5, pady=2)
         setattr(self, f'{folder_key}_metadata_label', metadata_label)
         
         # Transfer buttons frame
         transfer_frame = ttk.Frame(func_frame)
-        transfer_frame.grid(row=0, column=2, rowspan=2, sticky='ne', padx=5)
+        transfer_frame.grid(row=0, column=2, rowspan=2, sticky='e', padx=5)
         
         # Create transfer buttons based on options
         for option in transfer_options:
@@ -1025,6 +1025,11 @@ class PhotoSorterGUI:
                 btn = ttk.Button(transfer_frame, text=option, 
                                command=lambda t=target_folder, fk=folder_key: self._transfer_image(fk, t))
             btn.pack(side='left', padx=2)
+        
+        # Configure column weights to prevent expansion
+        func_frame.columnconfigure(0, weight=0)
+        func_frame.columnconfigure(1, weight=0)
+        func_frame.columnconfigure(2, weight=0)
         
         # Store folder key and current index
         setattr(self, f'{folder_key}_images', [])
