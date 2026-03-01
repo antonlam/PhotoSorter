@@ -687,6 +687,12 @@ class PhotoSorterGUI:
         keep_btn.pack(side='left', padx=2)
         ToolTip(keep_btn, 'Keep the largest file in this set, delete others')
         
+        # Remove this image button
+        remove_btn = ttk.Button(transfer_frame, text='Remove This Image', 
+                               command=self._remove_duplicate_image)
+        remove_btn.pack(side='left', padx=2)
+        ToolTip(remove_btn, 'Remove current image from disk and set')
+        
         # Initialize duplicate data
         setattr(self, 'duplicate_groups', [])
         setattr(self, 'current_set_index', 0)
@@ -1034,9 +1040,30 @@ class PhotoSorterGUI:
         func_frame = ttk.LabelFrame(main_frame, text='Image Information', padding=10)
         func_frame.pack(fill='x', pady=5)
         
-        # Image count label
-        count_label = ttk.Label(func_frame, text='Image: 0/0', width=20)
-        count_label.grid(row=0, column=0, sticky='w', padx=5)
+        # Image count frame with entry box
+        count_frame = ttk.Frame(func_frame)
+        count_frame.grid(row=0, column=0, sticky='w', padx=5)
+        
+        # Image label
+        count_label = ttk.Label(count_frame, text='Image:')
+        count_label.pack(side='left', padx=(0, 5))
+        
+        # Entry box for image number
+        count_entry = ttk.Entry(count_frame, width=5)
+        count_entry.pack(side='left', padx=2)
+        count_entry.insert(0, '0')
+        setattr(self, f'{folder_key}_count_entry', count_entry)
+        
+        # Bind entry box events
+        count_entry.bind('<Return>', lambda e, fk=folder_key: self._jump_to_image(fk))
+        count_entry.bind('<FocusOut>', lambda e, fk=folder_key: self._jump_to_image(fk))
+        
+        # Total count label
+        total_label = ttk.Label(count_frame, text='/ 0')
+        total_label.pack(side='left', padx=2)
+        setattr(self, f'{folder_key}_total_label', total_label)
+        
+        # Store the count_label for backward compatibility if needed
         setattr(self, f'{folder_key}_count_label', count_label)
         
         # Image name and size label
@@ -1158,9 +1185,14 @@ class PhotoSorterGUI:
         setattr(self, f'{folder_key}_images', image_files)
         setattr(self, f'{folder_key}_current_index', 0)
         
-        # Update UI
-        count_label = getattr(self, f'{folder_key}_count_label')
-        count_label.config(text=f'Image: 0/{len(image_files)}')
+        # Update UI - update total label
+        total_label = getattr(self, f'{folder_key}_total_label')
+        total_label.config(text=f'/ {len(image_files)}')
+        
+        # Reset entry box
+        count_entry = getattr(self, f'{folder_key}_count_entry')
+        count_entry.delete(0, tk.END)
+        count_entry.insert(0, '0')
         
         # Update tab title with count
         tab_index = getattr(self, f'{folder_key}_tab_index')
@@ -1181,9 +1213,10 @@ class PhotoSorterGUI:
         image_path = images[index]
         setattr(self, f'{folder_key}_current_index', index)
         
-        # Update count label
-        count_label = getattr(self, f'{folder_key}_count_label')
-        count_label.config(text=f'Image: {index + 1}/{len(images)}')
+        # Update count entry box (display 1-indexed)
+        count_entry = getattr(self, f'{folder_key}_count_entry')
+        count_entry.delete(0, tk.END)
+        count_entry.insert(0, str(index + 1))
         
         # Update name label with file size
         name_label = getattr(self, f'{folder_key}_name_label')
@@ -1305,6 +1338,44 @@ class PhotoSorterGUI:
         new_index = (current_index + direction) % len(images)
         self._display_image(folder_key, new_index)
     
+    def _jump_to_image(self, folder_key):
+        """Jump to image by number from entry box."""
+        images = getattr(self, f'{folder_key}_images')
+        if not images:
+            return
+        
+        count_entry = getattr(self, f'{folder_key}_count_entry')
+        entry_value = count_entry.get().strip()
+        
+        # Validate input
+        if not entry_value:
+            # Reset to current image if empty
+            current_index = getattr(self, f'{folder_key}_current_index')
+            count_entry.delete(0, tk.END)
+            count_entry.insert(0, str(current_index + 1))
+            return
+        
+        try:
+            image_number = int(entry_value)
+            # Convert to 0-indexed
+            index = image_number - 1
+            
+            # Validate range
+            if index < 0 or index >= len(images):
+                messagebox.showwarning('Invalid Input', f'Please enter a number between 1 and {len(images)}')
+                current_index = getattr(self, f'{folder_key}_current_index')
+                count_entry.delete(0, tk.END)
+                count_entry.insert(0, str(current_index + 1))
+                return
+            
+            # Jump to image
+            self._display_image(folder_key, index)
+        except ValueError:
+            messagebox.showwarning('Invalid Input', 'Please enter a valid number')
+            current_index = getattr(self, f'{folder_key}_current_index')
+            count_entry.delete(0, tk.END)
+            count_entry.insert(0, str(current_index + 1))
+    
     def _transfer_image(self, folder_key, target_folder_key):
         """Transfer current image to target folder."""
         images = getattr(self, f'{folder_key}_images')
@@ -1358,10 +1429,6 @@ class PhotoSorterGUI:
                 current_index = 0
             
             setattr(self, f'{folder_key}_current_index', current_index)
-            
-            # Update UI
-            count_label = getattr(self, f'{folder_key}_count_label')
-            count_label.config(text=f'Image: {current_index + 1 if images else 0}/{len(images)}')
             
             # Update tab title
             tab_index = getattr(self, f'{folder_key}_tab_index')
@@ -1646,6 +1713,64 @@ class PhotoSorterGUI:
                 
         except Exception as e:
             messagebox.showerror('Error', f'Failed to transfer image: {str(e)}')
+    
+    def _remove_duplicate_image(self):
+        """Remove current duplicate image from disk and duplicate set."""
+        duplicate_groups = getattr(self, 'duplicate_groups')
+        current_set_index = getattr(self, 'current_set_index')
+        current_image_index = getattr(self, 'current_image_index')
+        
+        if not duplicate_groups or current_set_index >= len(duplicate_groups):
+            messagebox.showwarning('Warning', 'No duplicate set selected')
+            return
+        
+        current_set = duplicate_groups[current_set_index]
+        if current_image_index >= len(current_set):
+            messagebox.showwarning('Warning', 'No image selected')
+            return
+        
+        # Confirm deletion
+        image_path = current_set[current_image_index]
+        image_name = os.path.basename(image_path)
+        if not messagebox.askyesno('Confirm', f'Delete "{image_name}" from disk?'):
+            return
+        
+        try:
+            # Delete the file
+            os.remove(image_path)
+            
+            # Remove from current set
+            current_set.pop(current_image_index)
+            
+            # If only 1 image left in the set, remove the entire set
+            if len(current_set) <= 1:
+                duplicate_groups.pop(current_set_index)
+                if current_set_index >= len(duplicate_groups):
+                    current_set_index = max(0, len(duplicate_groups) - 1)
+                current_image_index = 0
+            else:
+                # Move to previous image if we deleted the last one in the set
+                if current_image_index >= len(current_set):
+                    current_image_index = len(current_set) - 1
+            
+            # Update indices
+            setattr(self, 'current_set_index', current_set_index)
+            setattr(self, 'current_image_index', current_image_index)
+            
+            # Update progress and tab labels
+            progress_label = getattr(self, 'duplicated_progress_label')
+            if duplicate_groups:
+                progress_label.config(text=f'Duplicate Set #{current_set_index + 1} of {len(duplicate_groups)}')
+                self.notebook.tab(self.duplicated_tab_index, text=f'Duplicated ({len(duplicate_groups)} sets)')
+                self._display_duplicate_image(current_set_index, current_image_index)
+            else:
+                self._display_no_duplicates()
+                self.notebook.tab(self.duplicated_tab_index, text='Duplicated (0 sets)')
+            
+            messagebox.showinfo('Success', f'Deleted: {image_name}')
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to delete image: {str(e)}')
     
     def _keep_one_duplicate(self):
         """Keep the largest file in current duplicate set, delete others."""
